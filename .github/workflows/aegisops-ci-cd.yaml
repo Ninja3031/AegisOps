@@ -70,9 +70,7 @@ jobs:
           chmod 600 kubeconfig
 
       # ✅ Deploy to Kubernetes
-      - name: Deploy to Kubernetes
-        env:
-          KUBECONFIG: ${{ github.workspace }}/kubeconfig
+      - name: Kubernetes deployment (local cluster)
         run: |
-          kubectl apply -f kubernetes/ai-engine-deployment.yaml
-          kubectl rollout restart deployment aegisops-ai-engine -n aegisops
+          echo "⚠️ Skipping Kubernetes deploy in CI/CD"
+          echo "ℹ️ Local KIND cluster is not accessible from GitHub Actions"
