@@ -228,10 +228,14 @@ kubectl logs -l app=aegisops-ai-engine -n aegisops -f
 	•	Cloud-native deployment (EKS/GKE)
 
 
+
 This project demonstrates real-world AIOps engineering, not toy scripts.
 It reflects how modern DevOps teams design resilient, autonomous systems using Kubernetes, ML, and observability.
 
 ____
+
+<img width="971" height="356" alt="Screenshot 2026-01-05 at 5 07 53 PM" src="https://github.com/user-attachments/assets/5d2958a4-4d7b-4bcc-ae14-95fe233ec538" />
+
 
 
 
