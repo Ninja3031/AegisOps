@@ -16,8 +16,8 @@ spec:
       serviceAccountName: aegisops-ai
       containers:
       - name: ai-engine
-        image: aegisops-ai-engine:latest
-        imagePullPolicy: IfNotPresent
+        image: a7rz/aegisops-ai-engine:latest
+        imagePullPolicy: Always
         resources:
           requests:
             cpu: "100m"
