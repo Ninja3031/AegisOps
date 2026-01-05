@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aegisops-app
+  namespace: aegisops
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: aegisops
+  template:
+    metadata:
+      labels:
+        app: aegisops
+    spec:
+      containers:
+      - name: app
+        image: aegisops-app:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
