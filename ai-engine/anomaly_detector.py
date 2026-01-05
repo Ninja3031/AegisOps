@@ -1,22 +1,30 @@
+import os
+import time
 import requests
 import pandas as pd
-import time
-import subprocess
 from datetime import datetime
 from sklearn.ensemble import IsolationForest
+
+from kubernetes import client, config
 
 # ========================
 # CONFIGURATION
 # ========================
 
-PROMETHEUS_URL = "http://localhost:9090"
+PROMETHEUS_URL = (
+    "http://monitoring-kube-prometheus-prometheus."
+    "aegisops.svc.cluster.local:9090"
+)
+
 NAMESPACE = "aegisops"
 DEPLOYMENT_NAME = "aegisops-app"
 
 BASELINE_SAMPLES = 30
-BASELINE_INTERVAL = 5          # seconds
-MONITOR_INTERVAL = 10          # seconds
-COOLDOWN_SECONDS = 120         # prevent restart loops
+BASELINE_INTERVAL = 5      # seconds
+MONITOR_INTERVAL = 10      # seconds
+COOLDOWN_SECONDS = 120     # prevent scaling loops
+
+SCALE_UP_REPLICAS = 4
 
 QUERIES = {
     "rps": 'rate(http_requests_total[1m])',
@@ -30,63 +38,94 @@ QUERIES = {
 }
 
 # ========================
-# PROMETHEUS QUERY
+# PROMETHEUS QUERY LOGIC
 # ========================
 
-def query_prometheus(query):
-    response = requests.get(
-        f"{PROMETHEUS_URL}/api/v1/query",
-        params={"query": query},
-        timeout=5
-    )
+def query_prometheus(query: str) -> float:
+    try:
+        response = requests.get(
+            f"{PROMETHEUS_URL}/api/v1/query",
+            params={"query": query},
+            timeout=5
+        )
+        response.raise_for_status()
+    except Exception as e:
+        print("❌ Prometheus query failed:", e)
+        return 0.0
 
     results = response.json().get("data", {}).get("result", [])
 
-    cleaned = []
+    values = []
     for r in results:
         try:
             v = float(r["value"][1])
             if pd.notna(v) and v != float("inf"):
-                cleaned.append(v)
+                values.append(v)
         except Exception:
             continue
 
-    return sum(cleaned) / len(cleaned) if cleaned else 0.0
+    return sum(values) / len(values) if values else 0.0
 
 
-def collect_metrics():
+def collect_metrics() -> dict:
     return {
         "rps": query_prometheus(QUERIES["rps"]),
         "latency_p95": query_prometheus(QUERIES["latency_p95"]),
-        "memory": query_prometheus(QUERIES["memory"])
+        "memory": query_prometheus(QUERIES["memory"]),
     }
 
 # ========================
-# KUBERNETES AUTO-HEALING
+# KUBERNETES AUTO-SCALING
 # ========================
 
-def restart_kubernetes_deployment():
-    print("🔧 Triggering Kubernetes auto-healing (rollout restart)")
+def scale_kubernetes_deployment(replicas: int):
+    print(f"📈 Scaling {DEPLOYMENT_NAME} to {replicas} replicas")
 
     try:
-        subprocess.run(
-            [
-                "kubectl",
-                "rollout",
-                "restart",
-                f"deployment/{DEPLOYMENT_NAME}",
-                "-n",
-                NAMESPACE
-            ],
-            check=True
-        )
-        print("✅ Deployment restart triggered successfully")
+        config.load_incluster_config()
+        apps_v1 = client.AppsV1Api()
 
-    except subprocess.CalledProcessError as e:
-        print("❌ Failed to restart deployment:", e)
+        body = {
+            "spec": {
+                "replicas": replicas
+            }
+        }
+
+        apps_v1.patch_namespaced_deployment_scale(
+            name=DEPLOYMENT_NAME,
+            namespace=NAMESPACE,
+            body=body
+        )
+
+        print("✅ Scaling request sent to Kubernetes API")
+
+    except Exception as e:
+        print("❌ Failed to scale deployment:", e)
 
 # ========================
-# MAIN AIOPS LOOP
+# SLACK ALERTING
+# ========================
+
+def send_slack_alert(message: str):
+    webhook = os.getenv("SLACK_WEBHOOK_URL")
+
+    if not webhook:
+        print("⚠️ Slack webhook not configured")
+        return
+
+    payload = {
+        "text": message
+    }
+
+    try:
+        response = requests.post(webhook, json=payload, timeout=5)
+        response.raise_for_status()
+        print("🔔 Slack alert sent")
+    except Exception as e:
+        print("❌ Slack alert failed:", e)
+
+# ========================
+# MAIN AIOPS CONTROLLER
 # ========================
 
 def main():
@@ -97,7 +136,7 @@ def main():
     for _ in range(BASELINE_SAMPLES):
         metrics = collect_metrics()
 
-        # Skip cold-start samples
+        # Skip cold-start / idle samples
         if metrics["rps"] == 0.0 and metrics["latency_p95"] == 0.0:
             print("⏭ Skipping cold-start sample:", metrics)
         else:
@@ -106,10 +145,13 @@ def main():
 
         time.sleep(BASELINE_INTERVAL)
 
-    if len(baseline_data) < 10:
-        raise RuntimeError(
-            "❌ Not enough baseline data. Generate traffic and restart detector."
-        )
+    while len(baseline_data) < 10:
+        print("⏳ Waiting for sufficient baseline traffic...")
+        time.sleep(BASELINE_INTERVAL)
+        metrics = collect_metrics()
+        if metrics["rps"] > 0:
+            baseline_data.append(metrics)
+            print("📈 Baseline:", metrics)
 
     df_baseline = pd.DataFrame(baseline_data)
 
@@ -129,7 +171,7 @@ def main():
         df_current = pd.DataFrame([metrics])
         prediction = model.predict(df_current)[0]
 
-        # No traffic → do nothing
+        # No traffic → ignore
         if metrics["rps"] == 0.0:
             print("⏸ No traffic — skipping detection", metrics)
 
@@ -143,7 +185,17 @@ def main():
             ):
                 print("🚨 ANOMALY DETECTED", metrics)
 
-                restart_kubernetes_deployment()
+                scale_kubernetes_deployment(SCALE_UP_REPLICAS)
+
+                send_slack_alert(
+                    f"🚨 *AegisOps Incident Detected*\n"
+                    f"Service: {DEPLOYMENT_NAME}\n"
+                    f"Namespace: {NAMESPACE}\n"
+                    f"Action: Auto-scaled to {SCALE_UP_REPLICAS} replicas\n"
+                    f"Metrics: {metrics}\n"
+                    f"Time: {datetime.utcnow().isoformat()} UTC"
+                )
+
                 last_remediation_time = now
 
                 print(
@@ -156,7 +208,7 @@ def main():
                     "skipping remediation"
                 )
 
-        # Normal behaviour
+        # Normal behavior
         else:
             print("✅ Normal", metrics)
 

@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aegisops-ai-engine
+  namespace: aegisops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aegisops-ai-engine
+  template:
+    metadata:
+      labels:
+        app: aegisops-ai-engine
+    spec:
+      serviceAccountName: aegisops-ai
+      containers:
+      - name: ai-engine
+        image: aegisops-ai-engine:latest
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "300m"
+            memory: "256Mi"

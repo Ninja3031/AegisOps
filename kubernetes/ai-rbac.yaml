@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aegisops-ai
+  namespace: aegisops
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aegisops-ai-role
+  namespace: aegisops
+rules:
+- apiGroups: ["apps"]
+  resources:
+    - deployments
+    - deployments/scale
+  verbs:
+    - get
+    - list
+    - watch
+    - patch
+    - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aegisops-ai-binding
+  namespace: aegisops
+subjects:
+- kind: ServiceAccount
+  name: aegisops-ai
+  namespace: aegisops
+roleRef:
+  kind: Role
+  name: aegisops-ai-role
+  apiGroup: rbac.authorization.k8s.io
